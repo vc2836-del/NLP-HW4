@@ -11,7 +11,8 @@ DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 
 def setup_wandb(args):
     # Implement this if you wish to use wandb in your experiments
-    pass
+    wandb.init(project="nlp-hw4-t5_sql_generation", name=args.experiment_name, config=vars(args))
+    # pass
 
 def initialize_model(args):
     '''
@@ -20,7 +21,14 @@ def initialize_model(args):
     or training a T5 model initialized with the 'google-t5/t5-small' config
     from scratch.
     '''
-    pass
+    if args.finetune:
+        model = T5ForConditionalGeneration.from_pretrained("google-t5/t5-small")
+    else:
+        model = T5ForConditionalGeneration(T5Config.from_pretrained("google-t5/t5-small"))
+    
+    model = model.to(DEVICE)
+    return model
+    # pass
 
 def mkdir(dirpath):
     if not os.path.exists(dirpath):
@@ -31,11 +39,26 @@ def mkdir(dirpath):
 
 def save_model(checkpoint_dir, model, best):
     # Save model checkpoint to be able to load the model later
-    pass
+    mkdir(checkpoint_dir)
+    if best:
+        torch.save(model.state_dict(), os.path.join(checkpoint_dir, 'best_model.pt'))
+    else:
+        torch.save(model.state_dict(), os.path.join(checkpoint_dir, 'model.pt'))
+    # pass
 
 def load_model_from_checkpoint(args, best):
     # Load model from a checkpoint
-    pass
+    model = initialize_model(args)
+    model_type = 'ft' if args.finetune else 'scr'
+    checkpoint_dir = os.path.join('checkpoints', f'{model_type}_experiments', args.experiment_name)
+    if best:
+        model.load_state_dict(torch.load(os.path.join(checkpoint_dir, 'best_model.pt'), map_location=DEVICE))
+    else:
+        model.load_state_dict(torch.load(os.path.join(checkpoint_dir, 'model.pt'), map_location=DEVICE))
+    
+    model = model.to(DEVICE)
+    return model
+    # pass
 
 def initialize_optimizer_and_scheduler(args, model, epoch_length):
     optimizer = initialize_optimizer(args, model)
@@ -93,4 +116,3 @@ def get_parameter_names(model, forbidden_layer_types):
     # Add model specific parameters (defined with nn.Parameter) since they are not in any child.
     result += list(model._parameters.keys())
     return result
-

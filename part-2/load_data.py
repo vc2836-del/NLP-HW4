@@ -13,6 +13,70 @@ import torch
 
 PAD_IDX = 0
 
+SQL_SCHEMA_PREFIX = (
+    "flight ( flight_id , airline_code , from_airport , to_airport , departure_time , "
+    "arrival_time , stops , flight_number , meal_code , aircraft_code_sequence , "
+    "flight_days , time_elapsed , connections , dual_carrier , airline_flight ) | "
+
+    "airport ( airport_code , airport_name , airport_location , state_code , "
+    "country_name , time_zone_code , minimum_connect_time ) | "
+
+    "airline ( airline_code , airline_name , note ) | "
+
+    "city ( city_code , city_name , state_code , country_name , time_zone_code ) | "
+
+    "airport_service ( airport_code , city_code , direction , miles_distant , minutes_distant ) | "
+
+    "fare ( fare_id , fare_airline , from_airport , to_airport , fare_basis_code , "
+    "round_trip_required , round_trip_cost , one_direction_cost , restriction_code ) | "
+
+    "flight_fare ( flight_id , fare_id ) | "
+
+    "fare_basis ( fare_basis_code , booking_class , class_type , premium , economy , "
+    "discounted , night , season , basis_days ) | "
+
+    "class_of_service ( booking_class , class_description , rank ) | "
+
+    "food_service ( meal_code , meal_description , compartment , meal_number ) | "
+
+    "ground_service ( airport_code , city_code , transport_type , ground_fare ) | "
+
+    "restriction ( restriction_code , advance_purchase , stopovers , saturday_stay_required , "
+    "no_discounts , minimum_stay , maximum_stay , application ) | "
+
+    "dual_carrier ( main_airline , dual_airline , service_name , low_flight_number , high_flight_number ) | "
+
+    "code_description ( code , description ) | "
+
+    "aircraft ( aircraft_code , aircraft_description , basic_type , manufacturer , propulsion , "
+    "wide_body , pressurized , capacity , wing_span , engines , weight , length , "
+    "pay_load , cruising_speed , range_miles ) | "
+
+    "equipment_sequence ( aircraft_code_sequence , aircraft_code ) | "
+
+    "flight_stop ( flight_id , stop_number , stop_airport , stop_days , stop_time , "
+    "arrival_time , departure_time , arrival_airline , arrival_flight_number , "
+    "departure_airline , departure_flight_number ) | "
+
+    "flight_leg ( flight_id , leg_number , leg_flight ) | "
+
+    "state ( state_code , state_name , country_name ) | "
+
+    "time_zone ( time_zone_code , time_zone_name , hours_from_gmt ) | "
+
+    "date_day ( month_number , day_number , year , day_name ) | "
+
+    "days ( days_code , day_name ) | "
+
+    "month ( month_number , month_name ) | "
+
+    "time_interval ( period , begin_time , end_time ) | "
+
+    "compartment_class ( compartment , class_type ) | "
+
+    "translate to SQL: "
+)
+
 class T5Dataset(Dataset):
 
     def __init__(self, data_folder, split):
@@ -27,15 +91,50 @@ class T5Dataset(Dataset):
             * Class behavior should be different on the test set.
         '''
         # TODO
+        self.split = split
+        self.tokenizer = T5TokenizerFast.from_pretrained("google-t5/t5-small")
+        self.encoder_inputs, self.decoder_inputs, self.decoder_targets = self.process_data(data_folder, split, self.tokenizer)
 
     def process_data(self, data_folder, split, tokenizer):
         # TODO
+        path_nl = os.path.join(data_folder, f"{split}.nl")
+        lines_nl = load_lines(path_nl)
+        lines_nl = [SQL_SCHEMA_PREFIX + line.lower() for line in lines_nl]
+        
+        encoder_inputs = [tokenizer.encode(line, return_tensors = 'pt', max_length = 1280, truncation = True).squeeze(0) for line in lines_nl]
+        decoder_inputs = []
+        decoder_targets = []
+
+        if split == "test":
+            id_bos = tokenizer.pad_token_id
+            for _ in lines_nl:
+                decoder_inputs.append(torch.tensor([id_bos]))
+                decoder_targets.append(torch.tensor([]))
+        else:
+            path_sql = os.path.join(data_folder, f"{split}.sql")
+            lines_sql = load_lines(path_sql)
+
+            for line in lines_sql:
+                line = line.replace(" < ", " LESSTHAN ")
+                line = line.replace(" > ", " GREATERTHAN ")
+                target_ids = tokenizer.encode(line, return_tensors = 'pt').squeeze(0)
+                bos = torch.tensor([tokenizer.pad_token_id])
+                decoder_inputs.append(torch.cat((bos, target_ids[:-1])))
+                decoder_targets.append(target_ids)
+            
+        return encoder_inputs, decoder_inputs, decoder_targets
+        
     
     def __len__(self):
         # TODO
+        return len(self.encoder_inputs)
 
     def __getitem__(self, idx):
         # TODO
+        if self.split == "test":
+            return self.encoder_inputs[idx], self.decoder_inputs[idx]
+        else:
+            return self.encoder_inputs[idx], self.decoder_inputs[idx], self.decoder_targets[idx]
 
 def normal_collate_fn(batch):
     '''
@@ -54,7 +153,17 @@ def normal_collate_fn(batch):
         * initial_decoder_inputs: The very first input token to be decoder (only to be used in evaluation)
     '''
     # TODO
-    return [], [], [], [], []
+    encoder_inputs = [item[0] for item in batch]
+    decoder_inputs = [item[1] for item in batch]
+    decoder_targets = [item[2] for item in batch]
+
+    encoder_ids = pad_sequence(encoder_inputs, batch_first = True, padding_value = PAD_IDX)
+    encoder_mask = (encoder_ids != PAD_IDX).long()
+    decoder_input_ids = pad_sequence(decoder_inputs, batch_first = True, padding_value = PAD_IDX)
+    decoder_target_ids = pad_sequence(decoder_targets, batch_first = True, padding_value = PAD_IDX)
+
+    initial_decoder_inputs = decoder_input_ids[:, 0:1]
+    return encoder_ids, encoder_mask, decoder_input_ids, decoder_target_ids, initial_decoder_inputs
 
 def test_collate_fn(batch):
     '''
@@ -70,7 +179,14 @@ def test_collate_fn(batch):
         * initial_decoder_inputs: The very first input token to be decoder (only to be used in evaluation)
     '''
     # TODO
-    return [], [], []
+    encoder_inputs = [item[0] for item in batch]
+    decoder_inputs = [item[1] for item in batch]
+
+    encoder_ids = pad_sequence(encoder_inputs, batch_first = True, padding_value=PAD_IDX)
+    encoder_mask = (encoder_ids != PAD_IDX).long()
+    initial_decoder_inputs = pad_sequence(decoder_inputs, batch_first = True, padding_value = PAD_IDX)
+
+    return encoder_ids, encoder_mask, initial_decoder_inputs
 
 def get_dataloader(batch_size, split):
     data_folder = 'data'
