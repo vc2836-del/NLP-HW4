@@ -12,6 +12,7 @@ import random
 import argparse
 from utils import *
 import os
+from datasets import concatenate_datasets
 
 # Set seed
 random.seed(0)
@@ -45,7 +46,19 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
     # You can use progress_bar.update(1) to see the progress during training
     # You can refer to the pytorch tutorial covered in class for reference
 
-    raise NotImplementedError
+    for epoch in range(num_epochs):
+        for batch in train_dataloader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            model_output = model(**batch)
+            loss = model_output.loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            lr_scheduler.step()
+            progress_bar.update(1)
+    # raise NotImplementedError
 
     ##### YOUR CODE ENDS HERE ######
 
@@ -93,7 +106,20 @@ def create_augmented_dataloader(args, dataset):
     # dataloader will be for the original training split augmented with 5k random transformed examples from the training set.
     # You may find it helpful to see how the dataloader was created at other place in this code.
 
-    raise NotImplementedError
+    indices = random.sample(range(len(dataset["train"])), 5000)
+    sampled = dataset["train"].select(indices)
+ 
+    transformed_data = sampled.map(custom_transform, load_from_cache_file=False)
+    augmented_data = concatenate_datasets([dataset["train"], transformed_data])
+ 
+    augmented_data = augmented_data.map(tokenize_function, batched=True, load_from_cache_file=False)
+    augmented_data = augmented_data.remove_columns(["text"])
+    augmented_data = augmented_data.rename_column("label", "labels")
+    augmented_data.set_format("torch")
+ 
+    train_dataloader = DataLoader(augmented_data, shuffle=True, batch_size=args.batch_size)
+
+    # raise NotImplementedError
 
     ##### YOUR CODE ENDS HERE ######
 
