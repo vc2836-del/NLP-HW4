@@ -165,7 +165,7 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
  
             # Generate MULTIPLE candidates per input
             batch_size = encoder_input.size(0)
-            num_candidates = 5
+            num_candidates = 1
  
             generated = model.generate(
                 input_ids=encoder_input,
