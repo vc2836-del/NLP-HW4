@@ -28,14 +28,14 @@ def get_args():
     # Training hyperparameters
     parser.add_argument('--optimizer_type', type=str, default="AdamW", choices=["AdamW"],
                         help="What optimizer to use")
-    parser.add_argument('--learning_rate', type=float, default=1e-1)
+    parser.add_argument('--learning_rate', type=float, default=3e-4)
     parser.add_argument('--weight_decay', type=float, default=0)
 
     parser.add_argument('--scheduler_type', type=str, default="cosine", choices=["none", "cosine", "linear"],
                         help="Whether to use a LR scheduler and what type to use if so")
     parser.add_argument('--num_warmup_epochs', type=int, default=0,
                         help="How many epochs to warm up the learning rate for if using a scheduler")
-    parser.add_argument('--max_n_epochs', type=int, default=0,
+    parser.add_argument('--max_n_epochs', type=int, default=30,
                         help="How many epochs to train the model for")
     parser.add_argument('--patience_epochs', type=int, default=0,
                         help="If validation performance stops improving, how many epochs should we wait before stopping?")
@@ -48,6 +48,12 @@ def get_args():
     # Data hyperparameters
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--test_batch_size', type=int, default=16)
+
+    parser.add_argument('--num_beams', type=int, default=4,
+                        help="Number of beams to use during beam-search decoding")
+    parser.add_argument('--max_gen_length', type=int, default=512,
+                        help="Maximum number of decoder tokens to generate. SQL targets "
+                             "in this dataset routinely exceed 256 tokens, so this must stay high.")
 
     args = parser.parse_args()
     return args
@@ -129,10 +135,11 @@ def train_epoch(args, model, train_loader, optimizer, scheduler):
 
 def fix_sql(pred):
     pred = pred.strip()
-    pred = pred.replace(" LESSTHAN ", " < ")
-    pred = pred.replace(" GREATERTHAN ", " > ")
-    if not pred.upper().startswith("SELECT"):
-        pred = "SELECT * FROM flight"
+    pred = pred.replace("LESSEQUAL", "<=")
+    pred = pred.replace("GREATEREQUAL", ">=")
+    pred = pred.replace("LESSTHAN", "<")
+    pred = pred.replace("GREATERTHAN", ">")
+    pred = " ".join(pred.split())
     return pred
         
 def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_path, model_record_path):
@@ -143,7 +150,7 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     predictions = []
  
     with torch.no_grad():
-        for encoder_input, encoder_mask, decoder_input, decoder_targets, initial_decoder_inputs in tqdm(dev_loader):
+        for encoder_input, encoder_mask, decoder_input, decoder_targets, _ in tqdm(dev_loader):
             encoder_input = encoder_input.to(DEVICE)
             encoder_mask = encoder_mask.to(DEVICE)
             decoder_input = decoder_input.to(DEVICE)
@@ -163,18 +170,13 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
             total_tokens += num_tokens
             total_loss += loss_val * num_tokens
  
-            # Generate MULTIPLE candidates per input
-            batch_size = encoder_input.size(0)
-            num_candidates = 1
- 
             generated = model.generate(
-                input_ids=encoder_input,
-                attention_mask=encoder_mask,
-                max_length=256,
-                num_beams=8,
-                num_return_sequences=num_candidates,
-                early_stopping=True,
-                decoder_start_token_id=model.config.decoder_start_token_id,
+                input_ids = encoder_input,
+                attention_mask = encoder_mask,
+                max_length = args.max_gen_length,
+                num_beams = args.num_beams,
+                early_stopping = True,
+                decoder_start_token_id = model.config.decoder_start_token_id,
             )
  
             for gen in generated:
@@ -195,19 +197,17 @@ def test_inference(args, model, test_loader, model_sql_path, model_record_path):
     predictions = []
  
     with torch.no_grad():
-        for encoder_input, encoder_mask, initial_decoder_inputs in tqdm(test_loader):
+        for encoder_input, encoder_mask, _ in tqdm(test_loader):
             encoder_input = encoder_input.to(DEVICE)
             encoder_mask = encoder_mask.to(DEVICE)
  
-            batch_size = encoder_input.size(0)
- 
             generated = model.generate(
-                input_ids=encoder_input,
-                attention_mask=encoder_mask,
-                max_length=256,
-                num_beams=8,
-                early_stopping=True,
-                decoder_start_token_id=model.config.decoder_start_token_id,
+                input_ids = encoder_input,
+                attention_mask = encoder_mask,
+                max_length = args.max_gen_length,
+                num_beams = args.num_beams,
+                early_stopping = True,
+                decoder_start_token_id = model.config.decoder_start_token_id,
             )
  
             for gen in generated:

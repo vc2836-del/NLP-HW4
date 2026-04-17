@@ -14,68 +14,53 @@ import torch
 PAD_IDX = 0
 
 SQL_SCHEMA_PREFIX = (
-    "flight ( flight_id , airline_code , from_airport , to_airport , departure_time , "
-    "arrival_time , stops , flight_number , meal_code , aircraft_code_sequence , "
-    "flight_days , time_elapsed , connections , dual_carrier , airline_flight ) | "
-
-    "airport ( airport_code , airport_name , airport_location , state_code , "
-    "country_name , time_zone_code , minimum_connect_time ) | "
-
-    "airline ( airline_code , airline_name , note ) | "
-
-    "city ( city_code , city_name , state_code , country_name , time_zone_code ) | "
-
-    "airport_service ( airport_code , city_code , direction , miles_distant , minutes_distant ) | "
-
-    "fare ( fare_id , fare_airline , from_airport , to_airport , fare_basis_code , "
-    "round_trip_required , round_trip_cost , one_direction_cost , restriction_code ) | "
-
-    "flight_fare ( flight_id , fare_id ) | "
-
-    "fare_basis ( fare_basis_code , booking_class , class_type , premium , economy , "
-    "discounted , night , season , basis_days ) | "
-
-    "class_of_service ( booking_class , class_description , rank ) | "
-
-    "food_service ( meal_code , meal_description , compartment , meal_number ) | "
-
-    "ground_service ( airport_code , city_code , transport_type , ground_fare ) | "
-
-    "restriction ( restriction_code , advance_purchase , stopovers , saturday_stay_required , "
-    "no_discounts , minimum_stay , maximum_stay , application ) | "
-
-    "dual_carrier ( main_airline , dual_airline , service_name , low_flight_number , high_flight_number ) | "
-
-    "code_description ( code , description ) | "
-
-    "aircraft ( aircraft_code , aircraft_description , basic_type , manufacturer , propulsion , "
-    "wide_body , pressurized , capacity , wing_span , engines , weight , length , "
-    "pay_load , cruising_speed , range_miles ) | "
-
-    "equipment_sequence ( aircraft_code_sequence , aircraft_code ) | "
-
-    "flight_stop ( flight_id , stop_number , stop_airport , stop_days , stop_time , "
-    "arrival_time , departure_time , arrival_airline , arrival_flight_number , "
-    "departure_airline , departure_flight_number ) | "
-
-    "flight_leg ( flight_id , leg_number , leg_flight ) | "
-
-    "state ( state_code , state_name , country_name ) | "
-
-    "time_zone ( time_zone_code , time_zone_name , hours_from_gmt ) | "
-
-    "date_day ( month_number , day_number , year , day_name ) | "
-
-    "days ( days_code , day_name ) | "
-
+    "restriction ( no_discounts , minimum_stay , stopovers , restriction_code , application , "
+    "maximum_stay , saturday_stay_required , advance_purchase ) | "
+    "flight_stop ( departure_airline , stop_number , arrival_flight_number , flight_id , "
+    "arrival_time , departure_flight_number , stop_time , arrival_airline , stop_days , "
+    "stop_airport , departure_time ) | "
+    "food_service ( meal_code , compartment , meal_number , meal_description ) | "
     "month ( month_number , month_name ) | "
-
-    "time_interval ( period , begin_time , end_time ) | "
-
+    "code_description ( code , description ) | "
+    "city ( city_name , country_name , state_code , time_zone_code , city_code ) | "
+    "flight_fare ( flight_id , fare_id ) | "
+    "state ( country_name , state_code , state_name ) | "
+    "fare_basis ( discounted , class_type , season , basis_days , booking_class , night , "
+    "premium , fare_basis_code , economy ) | "
+    "date_day ( day_number , month_number , day_name , year ) | "
+    "time_interval ( period , end_time , begin_time ) | "
+    "flight ( to_airport , aircraft_code_sequence , dual_carrier , flight_id , stops , "
+    "flight_days , connections , arrival_time , time_elapsed , flight_number , from_airport , "
+    "airline_flight , airline_code , meal_code , departure_time ) | "
+    "dual_carrier ( low_flight_number , high_flight_number , main_airline , service_name , "
+    "dual_airline ) | "
+    "aircraft ( aircraft_code , capacity , wing_span , engines , aircraft_description , "
+    "basic_type , weight , pressurized , length , propulsion , pay_load , cruising_speed , "
+    "range_miles , wide_body , manufacturer ) | "
+    "fare ( to_airport , restriction_code , round_trip_required , fare_id , from_airport , "
+    "one_direction_cost , fare_basis_code , round_trip_cost , fare_airline ) | "
     "compartment_class ( compartment , class_type ) | "
+    "flight_leg ( flight_id , leg_number , leg_flight ) | "
+    "days ( days_code , day_name ) | "
+    "airport_service ( minutes_distant , airport_code , direction , city_code , miles_distant ) | "
+    "airport ( airport_code , airport_name , airport_location , minimum_connect_time , "
+    "country_name , state_code , time_zone_code ) | "
+    "time_zone ( time_zone_name , hours_from_gmt , time_zone_code ) | "
+    "airline ( note , airline_code , airline_name ) | "
+    "equipment_sequence ( aircraft_code , aircraft_code_sequence ) | "
+    "ground_service ( airport_code , transport_type , city_code , ground_fare ) | "
+    "class_of_service ( booking_class , class_description , rank ) | "
 
     "translate to SQL: "
 )
+
+def preprocess_sql(sql):
+    sql = sql.replace("<=", " LESSEQUAL ")
+    sql = sql.replace(">=", " GREATEREQUAL ")
+    sql = sql.replace("<", " LESSTHAN ")
+    sql = sql.replace(">", " GREATERTHAN ")
+    sql = " ".join(sql.split())
+    return sql
 
 class T5Dataset(Dataset):
 
@@ -109,15 +94,14 @@ class T5Dataset(Dataset):
             id_bos = tokenizer.pad_token_id
             for _ in lines_nl:
                 decoder_inputs.append(torch.tensor([id_bos]))
-                decoder_targets.append(torch.tensor([]))
+                decoder_targets.append(torch.tensor([], dtype=torch.long))
         else:
             path_sql = os.path.join(data_folder, f"{split}.sql")
             lines_sql = load_lines(path_sql)
 
             for line in lines_sql:
-                line = line.replace(" < ", " LESSTHAN ")
-                line = line.replace(" > ", " GREATERTHAN ")
-                target_ids = tokenizer.encode(line, return_tensors = 'pt').squeeze(0)
+                line = preprocess_sql(line)
+                target_ids = tokenizer.encode(line, return_tensors = 'pt', max_length=512, truncation=True).squeeze(0)
                 bos = torch.tensor([tokenizer.pad_token_id])
                 decoder_inputs.append(torch.cat((bos, target_ids[:-1])))
                 decoder_targets.append(target_ids)
@@ -213,4 +197,9 @@ def load_lines(path):
 
 def load_prompting_data(data_folder):
     # TODO
+    train_x = load_lines(os.path.join(data_folder, "train.nl"))
+    train_y = load_lines(os.path.join(data_folder, "train.sql"))
+    dev_x = load_lines(os.path.join(data_folder, "dev.nl"))
+    dev_y = load_lines(os.path.join(data_folder, "dev.sql"))
+    test_x = load_lines(os.path.join(data_folder, "test.nl"))
     return train_x, train_y, dev_x, dev_y, test_x
